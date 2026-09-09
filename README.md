@@ -40,6 +40,43 @@ time within the same agent (agents don't hold their transcript files open and
 sessions share a `cwd`, so this is the reliable signal). CLI-only: agent sessions
 launched from an IDE/desktop app have no CLI process, so they show as idle/stale.
 
+## Concepts
+
+Two independent axes describe every session. **State** tells you whether a session
+is running and how recently it was touched (should you close it?); **context
+rating** tells you how full its context window is (is it running out of room?). A
+session can be `live` and `critical` at once, or `stale` and `good` — the two
+answer different questions.
+
+### State — is it alive, and how recently was it touched?
+
+State is decided in two steps: first "is a process actually running for it?", then
+"how long since the transcript's last message?" (`age = now − last activity`).
+
+| State | Rule | Meaning | Why the cutoff |
+|-------|------|---------|----------------|
+| **live** | a running agent PID is matched to it | Open right now in a terminal, process attached | Ground truth — a real process is using CPU/mem, not inferred from file age |
+| **active** | not live, last activity ≤ **10 min** | Just worked in; you likely detached or it's between turns | Short enough that it's almost certainly a session you're still "in" |
+| **idle** | not live, **10 min–24 h** | Paused today but not abandoned; likely to be resumed | Covers "stepped away" without flagging it for cleanup |
+| **stale** | not live, last activity > **24 h** | Untouched over a day — the forgotten/abandoned pile | The "closed the terminal and never cleared it" sessions; this is what `--clean` and **Clear all stale** target |
+
+**Stale = a non-running session whose last activity was more than 24 hours ago.**
+Clearing it is recoverable (archived, not deleted), and live/idle sessions,
+memories, and code are left untouched. The two thresholds are `ACTIVE_SECS`
+(active→idle, 10 min) and `IDLE_SECS` (idle→stale, 24 h) in `monitor.py`.
+
+### Context rating — how full is the window?
+
+`percent = context tokens / window`. Window is read from the session when it
+declares one (Codex), else falls back to 200k (`--window` to override).
+
+| Rating | Threshold | Why |
+|--------|-----------|-----|
+| **good** | < 50% | Plenty of headroom |
+| **moderate** | 50–75% | Filling up; worth being aware |
+| **high** | 75–90% | Getting tight — good time to wrap up or `/clear` soon |
+| **critical** | ≥ 90% | About to hit the wall; summarization/context loss is imminent |
+
 ## Run it
 
 ```bash
