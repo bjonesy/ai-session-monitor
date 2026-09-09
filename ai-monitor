@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Launcher: start the monitor and open it in the browser.
+# Symlink this onto your PATH:  ln -s "$PWD/claude-monitor" /usr/local/bin/claude-monitor
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PORT="${1:-8787}"
+( sleep 1; open "http://127.0.0.1:${PORT}" 2>/dev/null || true ) &
+exec python3 "$DIR/monitor.py" --port "$PORT"
