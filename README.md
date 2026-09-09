@@ -6,6 +6,10 @@ more. See how many are live, each session's context rating, how long it's been
 open, whether it's gone stale, what it's about, and the CPU/memory of the live
 processes.
 
+![AI Session Monitor dashboard](docs/dashboard.png)
+
+> The screenshots use synthetic demo data.
+
 ## Supported agents
 
 | Agent | Sessions read from | Live process | Context window |
@@ -53,6 +57,8 @@ Requires only Python 3 (the one macOS ships works). Auto-refreshes every 5s.
 Every card has a **`▾ show summary`** toggle that fetches the last ~6 turns of that
 conversation on demand and shows them inline: user prompts, assistant replies
 (thinking dimmed, tool calls summarized). Open panels persist across refreshes.
+
+<img src="docs/summary.png" alt="A session card with its conversation summary expanded" width="420">
 
 ## Resuming & clearing sessions
 
