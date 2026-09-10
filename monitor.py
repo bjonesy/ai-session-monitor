@@ -664,6 +664,29 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .turn.assistant .who { background:rgba(63,185,80,.14); color:var(--good); }
   .turn .body { color:var(--text); white-space:pre-wrap; word-break:break-word; }
   .turn .body.think { color:var(--muted); font-style:italic; }
+  /* ---- list view ---- */
+  #grid.list { display:flex; flex-direction:column; gap:4px; padding:12px 16px; }
+  .row { position:relative; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--idle);
+    border-radius:6px; padding:5px 10px; font-size:12px; }
+  .row.live{border-left-color:var(--live);} .row.active{border-left-color:var(--active);}
+  .row.idle{border-left-color:var(--idle);} .row.stale{border-left-color:var(--stale);opacity:.72;}
+  .row.removing{opacity:.3;transform:scale(.99);transition:.25s;}
+  .row .dot{ width:7px;height:7px;border-radius:50%;flex:0 0 auto; }
+  .row .rtitle{ flex:1 1 180px; min-width:110px; font-weight:600; color:var(--text);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .rproj{ color:var(--muted); font-size:11px; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; max-width:150px; flex:0 1 auto; }
+  .row .rbar{ width:70px; height:6px; background:var(--panel2); border-radius:3px; overflow:hidden; flex:0 0 auto; }
+  .row .rbar > span{ display:block; height:100%; }
+  .row .rpct{ width:38px; text-align:right; flex:0 0 auto; font-variant-numeric:tabular-nums; }
+  .row .rtime{ color:var(--muted); white-space:nowrap; flex:0 0 auto;
+    font-variant-numeric:tabular-nums; min-width:60px; }
+  .row .rowact{ position:absolute; right:6px; top:4px; display:none; gap:5px;
+    background:var(--panel2); border:1px solid var(--border); border-radius:6px; padding:2px 4px; }
+  .row:hover .rowact{ display:flex; }
+  .row .resume.mini,.row .clear.mini,.row .summ-btn.mini{ padding:2px 6px; font-size:11px; margin-top:0; }
+  .row .summ{ flex-basis:100%; }
   footer { padding:10px 24px; color:var(--muted); font-size:11px; border-top:1px solid var(--border); }
   code { background:var(--panel2); padding:1px 5px; border-radius:4px; font-size:11px; }
 </style>
@@ -675,6 +698,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </header>
 <div class="controls">
   <input type="text" id="search" placeholder="Filter by title, project, branch, prompt…">
+  <span class="chip viewtog" data-v="tile" title="Tile view">▦</span>
+  <span class="chip viewtog" data-v="list" title="List view">☰</span>
   <span class="chip on" data-f="all">All</span>
   <span class="chip" data-f="live">Live</span>
   <span class="chip" data-f="active">Active</span>
@@ -687,7 +712,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <div id="grid"></div>
 <footer id="foot"></footer>
 <script>
-let DATA=null, FILTER="all", AGENTF="all", Q="";
+let DATA=null, FILTER="all", AGENTF="all", Q="", VIEW=localStorage.getItem("ai-monitor-view")||"tile";
 const OPEN=new Set(), SUMM={};
 const fmtAge=s=>{ if(s==null)return "?"; if(s<60)return s+"s"; if(s<3600)return Math.floor(s/60)+"m";
   if(s<86400)return Math.floor(s/3600)+"h"+Math.floor((s%3600)/60)+"m"; return Math.floor(s/86400)+"d"+Math.floor((s%86400)/3600)+"h"; };
@@ -727,6 +752,8 @@ function render(){
   }
 
   const grid=document.getElementById("grid"); grid.innerHTML="";
+  grid.className = VIEW==="list" ? "list" : "";
+  const multiAgent = Object.values(DATA.by_agent).filter(v=>v>0).length>1;
   let shown=0;
   for(const s of DATA.sessions){
     if(FILTER!=="all" && s.state!==FILTER) continue;
@@ -738,6 +765,25 @@ function render(){
     const ag=DATA.agents[s.agent]||{label:s.agent,color:"#666"};
     const pid=s.pid?`pid ${s.pid}`:"";
     const cpu=s.cpu!=null?`${s.cpu}% cpu`:""; const mem=s.rss_mb!=null?`${s.rss_mb}mb`:"";
+    if(VIEW==="list"){
+      grid.insertAdjacentHTML("beforeend",`
+        <div class="row ${s.state}">
+          ${multiAgent?`<span class="dot" style="background:${ag.color}" title="${esc(ag.label)}"></span>`:""}
+          <span class="rtitle" title="${title}">${title}</span>
+          ${s.project?`<span class="rproj">${esc(s.project)}</span>`:""}
+          <span class="rbar"><span class="fill-${s.context_rating}" style="width:${Math.min(100,s.context_pct)}%"></span></span>
+          <span class="rpct rating-${s.context_rating}" title="${fmtTok(s.context_tokens)}/${fmtTok(s.window)} tok">${s.context_pct}%</span>
+          <span class="rtime" title="open (first activity)">open ${fmtAge(s.open_secs)}</span>
+          <span class="rtime" title="idle (since last activity)">idle ${fmtAge(s.age_secs)}</span>
+          <span class="rowact">
+            <div class="resume mini" data-cmd="${esc(resumeCmd(s))}" title="copy resume command"><span class="txt">⧉</span></div>
+            ${s.state==="live"?"":`<div class="clear mini" data-path="${esc(s.path)}" data-title="${esc(s.title||s.session_id.slice(0,8))}" title="archive this session (recoverable)">🗑</div>`}
+            <span class="summ-btn mini" data-path="${esc(s.path)}" title="show summary">▾</span>
+          </span>
+          <div class="summ"></div>
+        </div>`);
+      continue;
+    }
     grid.insertAdjacentHTML("beforeend",`
       <div class="card ${s.state}">
         <div class="badges">
@@ -771,8 +817,9 @@ function render(){
   }
   grid.querySelectorAll(".summ-btn").forEach(sb=>{
     if(OPEN.has(sb.dataset.path)&&SUMM[sb.dataset.path]){
-      sb.nextElementSibling.innerHTML=SUMM[sb.dataset.path];
-      sb.nextElementSibling.classList.add("open"); sb.textContent="▴ hide summary";
+      const p=(sb.closest(".card,.row")||document).querySelector(".summ");
+      p.innerHTML=SUMM[sb.dataset.path]; p.classList.add("open");
+      sb.textContent=sb.classList.contains("mini")?"▴":"▴ hide summary";
     }
   });
   if(!shown) grid.innerHTML=`<div class="muted" style="padding:20px">No sessions match this filter.</div>`;
@@ -781,9 +828,10 @@ function render(){
 document.getElementById("grid").addEventListener("click",async e=>{
   const sb=e.target.closest(".summ-btn");
   if(sb){
-    const path=sb.dataset.path, panel=sb.nextElementSibling;
-    if(panel.classList.contains("open")){ panel.classList.remove("open"); sb.textContent="▾ show summary"; OPEN.delete(path); return; }
-    sb.textContent="loading…"; OPEN.add(path);
+    const path=sb.dataset.path, panel=(sb.closest(".card,.row")||document).querySelector(".summ"), mini=sb.classList.contains("mini");
+    const L={show:mini?"▾":"▾ show summary", hide:mini?"▴":"▴ hide summary", load:mini?"…":"loading…"};
+    if(panel.classList.contains("open")){ panel.classList.remove("open"); sb.textContent=L.show; OPEN.delete(path); return; }
+    sb.textContent=L.load; OPEN.add(path);
     try{
       const r=await fetch("/api/tail?n=6&path="+encodeURIComponent(path)); const j=await r.json();
       let html;
@@ -792,14 +840,14 @@ document.getElementById("grid").addEventListener("click",async e=>{
       else html=j.messages.map(m=>{ const think=m.text.startsWith("💭");
         const body=m.text.length>600?m.text.slice(0,600)+"…":m.text;
         return `<div class="turn ${m.role}"><span class="who">${m.role}</span><div class="body${think?' think':''}">${esc(body)}</div></div>`; }).join("");
-      SUMM[path]=html; panel.innerHTML=html; panel.classList.add("open"); sb.textContent="▴ hide summary";
-    }catch(err){ panel.innerHTML=`<div class="muted">${esc(String(err))}</div>`; panel.classList.add("open"); sb.textContent="▴ hide summary"; }
+      SUMM[path]=html; panel.innerHTML=html; panel.classList.add("open"); sb.textContent=L.hide;
+    }catch(err){ panel.innerHTML=`<div class="muted">${esc(String(err))}</div>`; panel.classList.add("open"); sb.textContent=L.hide; }
     return;
   }
   const clr=e.target.closest(".clear");
   if(clr){
     if(!confirm(`Archive this session?\n\n"${clr.dataset.title}"\n\nMoves to the agent's session-archive folder (recoverable). Memories and code are untouched.`)) return;
-    const card=clr.closest(".card"); card.classList.add("removing");
+    const card=clr.closest(".card,.row"); card.classList.add("removing");
     try{
       const r=await fetch("/api/clear",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:clr.dataset.path})});
       const j=await r.json();
@@ -829,6 +877,11 @@ document.querySelectorAll(".chip[data-f]").forEach(ch=>ch.onclick=()=>{
 });
 document.getElementById("clearAll").onclick=clearAllStale;
 document.getElementById("search").oninput=e=>{ Q=e.target.value.toLowerCase().trim(); render(); };
+document.querySelectorAll(".viewtog").forEach(ch=>{
+  ch.classList.toggle("on", ch.dataset.v===VIEW);
+  ch.onclick=()=>{ VIEW=ch.dataset.v; localStorage.setItem("ai-monitor-view",VIEW);
+    document.querySelectorAll(".viewtog").forEach(x=>x.classList.toggle("on",x.dataset.v===VIEW)); render(); };
+});
 refresh(); setInterval(refresh,5000);
 </script>
 </body>
