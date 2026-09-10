@@ -817,8 +817,8 @@ function render(){
   }
   grid.querySelectorAll(".summ-btn").forEach(sb=>{
     if(OPEN.has(sb.dataset.path)&&SUMM[sb.dataset.path]){
-      sb.nextElementSibling.innerHTML=SUMM[sb.dataset.path];
-      sb.nextElementSibling.classList.add("open");
+      const p=(sb.closest(".card,.row")||document).querySelector(".summ");
+      p.innerHTML=SUMM[sb.dataset.path]; p.classList.add("open");
       sb.textContent=sb.classList.contains("mini")?"▴":"▴ hide summary";
     }
   });
@@ -828,7 +828,7 @@ function render(){
 document.getElementById("grid").addEventListener("click",async e=>{
   const sb=e.target.closest(".summ-btn");
   if(sb){
-    const path=sb.dataset.path, panel=sb.nextElementSibling, mini=sb.classList.contains("mini");
+    const path=sb.dataset.path, panel=(sb.closest(".card,.row")||document).querySelector(".summ"), mini=sb.classList.contains("mini");
     const L={show:mini?"▾":"▾ show summary", hide:mini?"▴":"▴ hide summary", load:mini?"…":"loading…"};
     if(panel.classList.contains("open")){ panel.classList.remove("open"); sb.textContent=L.show; OPEN.delete(path); return; }
     sb.textContent=L.load; OPEN.add(path);
