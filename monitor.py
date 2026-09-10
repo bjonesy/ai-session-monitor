@@ -687,6 +687,22 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .row:hover .rowact{ display:flex; }
   .row .resume.mini,.row .clear.mini,.row .summ-btn.mini{ padding:2px 6px; font-size:11px; margin-top:0; }
   .row .summ{ flex-basis:100%; }
+  /* ---- mini / corner-widget mode (layers on top of list view) ---- */
+  #miniTog { font-size:14px; line-height:1; }
+  #miniCount { display:none; font-size:12px; font-weight:600; }
+  #miniCount .dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+    background:var(--live); margin-right:4px; vertical-align:middle; }
+  body.mini header, body.mini footer { display:none; }
+  body.mini .controls { padding:5px 8px; gap:6px; }
+  body.mini .controls > *:not(#miniTog):not(#miniCount) { display:none; }
+  body.mini #miniCount { display:inline-block; margin-left:auto; }
+  body.mini #grid.list { padding:5px 7px; gap:2px; }
+  body.mini .row { padding:3px 8px; gap:8px; border-radius:4px; font-size:11px; }
+  body.mini .row .rproj, body.mini .row .rbar, body.mini .row .ropen { display:none; }
+  body.mini .row .rtitle { flex:1 1 auto; min-width:0; }
+  body.mini .row .rpct { width:34px; }
+  body.mini .row .ridle { min-width:0; }
+  body.mini .row .rowact { top:2px; right:5px; }
   footer { padding:10px 24px; color:var(--muted); font-size:11px; border-top:1px solid var(--border); }
   code { background:var(--panel2); padding:1px 5px; border-radius:4px; font-size:11px; }
 </style>
@@ -700,6 +716,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <input type="text" id="search" placeholder="Filter by title, project, branch, prompt…">
   <span class="chip viewtog" data-v="tile" title="Tile view">▦</span>
   <span class="chip viewtog" data-v="list" title="List view">☰</span>
+  <span class="chip" id="miniTog" title="Mini / corner-widget mode">⊟</span>
   <span class="chip on" data-f="all">All</span>
   <span class="chip" data-f="live">Live</span>
   <span class="chip" data-f="active">Active</span>
@@ -708,11 +725,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <span id="agentChips"></span>
   <span class="chip" id="clearAll" style="border-color:var(--critical);color:var(--critical)">🗑 Clear all stale</span>
   <span class="muted" id="updated" style="margin-left:auto"></span>
+  <span id="miniCount"></span>
 </div>
 <div id="grid"></div>
 <footer id="foot"></footer>
 <script>
 let DATA=null, FILTER="all", AGENTF="all", Q="", VIEW=localStorage.getItem("ai-monitor-view")||"tile";
+let MINI=localStorage.getItem("ai-monitor-mini")==="1";
 const OPEN=new Set(), SUMM={};
 const fmtAge=s=>{ if(s==null)return "?"; if(s<60)return s+"s"; if(s<3600)return Math.floor(s/60)+"m";
   if(s<86400)return Math.floor(s/3600)+"h"+Math.floor((s%3600)/60)+"m"; return Math.floor(s/86400)+"d"+Math.floor((s%86400)/3600)+"h"; };
@@ -735,6 +754,7 @@ function render(){
     ["cpu",DATA.total_cpu+"%"],["mem",DATA.total_rss_mb+"mb"]
   ].map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
   document.getElementById("updated").textContent="updated "+new Date(DATA.generated_at*1000).toLocaleTimeString();
+  document.getElementById("miniCount").innerHTML=`<span class="dot"></span>${c.live} live`;
 
   // agent filter chips (only if >1 agent has sessions)
   const ac=document.getElementById("agentChips");
@@ -752,10 +772,11 @@ function render(){
   }
 
   const grid=document.getElementById("grid"); grid.innerHTML="";
-  grid.className = VIEW==="list" ? "list" : "";
+  grid.className = (VIEW==="list"||MINI) ? "list" : "";
   const multiAgent = Object.values(DATA.by_agent).filter(v=>v>0).length>1;
   let shown=0;
   for(const s of DATA.sessions){
+    if(MINI && s.state!=="live" && s.state!=="active") continue;
     if(FILTER!=="all" && s.state!==FILTER) continue;
     if(AGENTF!=="all" && s.agent!==AGENTF) continue;
     if(Q){ const hay=((s.title||"")+" "+(s.project||"")+" "+(s.branch||"")+" "+(s.last_prompt||"")+" "+s.agent).toLowerCase();
@@ -773,8 +794,8 @@ function render(){
           ${s.project?`<span class="rproj">${esc(s.project)}</span>`:""}
           <span class="rbar"><span class="fill-${s.context_rating}" style="width:${Math.min(100,s.context_pct)}%"></span></span>
           <span class="rpct rating-${s.context_rating}" title="${fmtTok(s.context_tokens)}/${fmtTok(s.window)} tok">${s.context_pct}%</span>
-          <span class="rtime" title="open (first activity)">open ${fmtAge(s.open_secs)}</span>
-          <span class="rtime" title="idle (since last activity)">idle ${fmtAge(s.age_secs)}</span>
+          <span class="rtime ropen" title="open (first activity)">open ${fmtAge(s.open_secs)}</span>
+          <span class="rtime ridle" title="idle (since last activity)">idle ${fmtAge(s.age_secs)}</span>
           <span class="rowact">
             <div class="resume mini" data-cmd="${esc(resumeCmd(s))}" title="copy resume command"><span class="txt">⧉</span></div>
             ${s.state==="live"?"":`<div class="clear mini" data-path="${esc(s.path)}" data-title="${esc(s.title||s.session_id.slice(0,8))}" title="archive this session (recoverable)">🗑</div>`}
@@ -822,7 +843,7 @@ function render(){
       sb.textContent=sb.classList.contains("mini")?"▴":"▴ hide summary";
     }
   });
-  if(!shown) grid.innerHTML=`<div class="muted" style="padding:20px">No sessions match this filter.</div>`;
+  if(!shown) grid.innerHTML=`<div class="muted" style="padding:${MINI?'10px':'20px'}">${MINI?"No live or active sessions.":"No sessions match this filter."}</div>`;
   document.getElementById("foot").innerHTML=`Reading <code>~/.claude/projects</code> + <code>~/.codex/sessions</code> · auto-refresh 5s · showing ${shown}/${c.total}`;
 }
 document.getElementById("grid").addEventListener("click",async e=>{
@@ -882,6 +903,10 @@ document.querySelectorAll(".viewtog").forEach(ch=>{
   ch.onclick=()=>{ VIEW=ch.dataset.v; localStorage.setItem("ai-monitor-view",VIEW);
     document.querySelectorAll(".viewtog").forEach(x=>x.classList.toggle("on",x.dataset.v===VIEW)); render(); };
 });
+const miniTog=document.getElementById("miniTog");
+function applyMini(){ document.body.classList.toggle("mini",MINI); miniTog.classList.toggle("on",MINI); }
+miniTog.onclick=()=>{ MINI=!MINI; localStorage.setItem("ai-monitor-mini",MINI?"1":"0"); applyMini(); render(); };
+applyMini();
 refresh(); setInterval(refresh,5000);
 </script>
 </body>
