@@ -456,22 +456,43 @@ def clear_session(path, purge=False):
             "archive_dir": None if purge else archive_root}
 
 
-def clean_stale(days, purge=False, dry_run=True):
-    snap = build_snapshot()
-    cutoff = days * 86400
-    victims = [s for s in snap["sessions"] if not s["is_live"] and s["age_secs"] > cutoff]
-    res = {"days": days, "purge": purge, "dry_run": dry_run, "count": len(victims), "items": []}
+def _clear_many(victims, purge=False, dry_run=True):
+    res = {"ok": True, "purge": purge, "dry_run": dry_run, "count": len(victims),
+           "cleared": 0, "failed": [], "items": []}
     for s in victims:
         e = {"agent": s["agent"], "title": s["title"] or s["session_id"][:8],
              "age_days": round(s["age_secs"] / 86400, 1), "path": s["path"],
              "size_mb": round(s["size_bytes"] / 1048576, 2)}
         if not dry_run:
             try:
-                clear_session(s["path"], purge=purge); e["cleared"] = True
+                clear_session(s["path"], purge=purge); e["cleared"] = True; res["cleared"] += 1
             except Exception as ex:
-                e["error"] = str(ex)
+                e["error"] = str(ex); res["failed"].append(e)
         res["items"].append(e)
     return res
+
+
+def clean_stale(days, purge=False, dry_run=True):
+    """CLI: archive every non-live session untouched for more than `days`."""
+    snap = build_snapshot()
+    cutoff = days * 86400
+    victims = [s for s in snap["sessions"] if not s["is_live"] and s["age_secs"] > cutoff]
+    res = _clear_many(victims, purge=purge, dry_run=dry_run)
+    res["days"] = days
+    return res
+
+
+def clear_stale_sessions(agent=None, purge=False, dry_run=False, default_window=DEFAULT_WINDOW):
+    """Dashboard: archive every session currently in the `stale` state (optionally one agent).
+
+    One snapshot, one loop, per-session error reporting — the browser used to fire one
+    request per session, which gave no progress feedback and stopped silently if the tab
+    reloaded mid-way.
+    """
+    snap = build_snapshot(default_window)
+    victims = [s for s in snap["sessions"]
+               if s["state"] == "stale" and not s["is_live"] and (agent is None or s["agent"] == agent)]
+    return _clear_many(victims, purge=purge, dry_run=dry_run)
 
 
 def get_tail(path, n):
@@ -613,6 +634,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .chip { background:var(--panel); border:1px solid var(--border); color:var(--muted);
     padding:5px 12px; border-radius:16px; cursor:pointer; font-size:12px; user-select:none; }
   .chip.on { background:var(--active); color:#fff; border-color:var(--active); }
+  .chip.busy { opacity:.55; pointer-events:none; }
   .muted { color:var(--muted); font-size:12px; }
   #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr));
     gap:14px; padding:20px 24px; }
@@ -884,13 +906,27 @@ document.getElementById("grid").addEventListener("click",async e=>{
 });
 function fb(cmd,done){ const t=document.createElement("textarea"); t.value=cmd; t.style.position="fixed"; t.style.opacity="0";
   document.body.appendChild(t); t.select(); try{ document.execCommand("copy"); done(); }catch(e){ prompt("Copy this:",cmd); } document.body.removeChild(t); }
+let CLEARING=false;
 async function clearAllStale(){
+  if(CLEARING) return;
   const stale=DATA.sessions.filter(s=>s.state==="stale"&&(AGENTF==="all"||s.agent===AGENTF));
   if(!stale.length){ alert("No stale sessions to clear."); return; }
-  if(!confirm(`Archive ALL ${stale.length} stale sessions (untouched >24h)?\n\nRecoverable. Live/idle sessions, memories, and code are untouched.`)) return;
-  let ok=0,fail=0;
-  for(const s of stale){ try{ const r=await fetch("/api/clear",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:s.path})}); (await r.json()).ok?ok++:fail++; }catch(e){ fail++; } }
-  alert(`Archived ${ok} session(s)${fail?`, ${fail} failed`:""}.`); refresh();
+  const who=AGENTF==="all"?"":` ${(DATA.agents[AGENTF]||{label:AGENTF}).label}`;
+  if(!confirm(`Archive ALL ${stale.length}${who} stale sessions (untouched >24h)?\n\nRecoverable. Live/idle sessions, memories, and code are untouched.`)) return;
+  const btn=document.getElementById("clearAll"), orig=btn.textContent;
+  CLEARING=true; btn.classList.add("busy"); btn.textContent=`⏳ archiving ${stale.length}…`;
+  try{
+    const r=await fetch("/api/clear-stale",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent:AGENTF==="all"?null:AGENTF})});
+    const j=await r.json();
+    if(!j.ok) throw new Error(j.error||"unknown error");
+    let msg=`Archived ${j.cleared} of ${j.count} stale session(s).`;
+    if(j.failed.length){
+      msg+=`\n\n${j.failed.length} could not be archived:\n`+j.failed.slice(0,8).map(f=>`• ${f.title}: ${f.error}`).join("\n");
+      if(j.failed.length>8) msg+=`\n…and ${j.failed.length-8} more`;
+    }
+    alert(msg);
+  }catch(err){ alert("Clear all stale failed: "+err.message); }
+  finally{ CLEARING=false; btn.classList.remove("busy"); btn.textContent=orig; refresh(); }
 }
 document.querySelectorAll(".chip[data-f]").forEach(ch=>ch.onclick=()=>{
   document.querySelectorAll(".chip[data-f]").forEach(x=>x.classList.remove("on"));
@@ -946,13 +982,24 @@ def make_handler(window):
                 self._send(404, b"not found", "text/plain")
 
         def do_POST(self):
-            if self.path != "/api/clear":
+            if self.path not in ("/api/clear", "/api/clear-stale"):
                 self._send(404, b"not found", "text/plain"); return
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n) or b"{}")
             except Exception:
                 self._send(400, json.dumps({"ok": False, "error": "bad request"}).encode(), "application/json"); return
+            if self.path == "/api/clear-stale":
+                agent = body.get("agent") or None
+                if agent is not None and agent not in AGENTS:
+                    self._send(400, json.dumps({"ok": False, "error": f"unknown agent {agent!r}"}).encode(), "application/json"); return
+                try:
+                    res = clear_stale_sessions(agent=agent, purge=bool(body.get("purge")),
+                                               dry_run=bool(body.get("dry_run")), default_window=window)
+                    self._send(200, json.dumps(res).encode(), "application/json")
+                except Exception as e:
+                    self._send(500, json.dumps({"ok": False, "error": str(e)}).encode(), "application/json")
+                return
             snap = build_snapshot(window)
             match = next((s for s in snap["sessions"] if s["path"] == body.get("path")), None)
             if match and match["is_live"]:

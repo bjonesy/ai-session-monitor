@@ -104,6 +104,9 @@ conversation on demand and shows them inline: user prompts, assistant replies
 - **Clear (archive):** idle/stale cards have `🗑 clear`, and there's a **Clear all
   stale** button. Clearing *moves* the transcript to the agent's
   `…-archive/` folder (recoverable), it does **not** hard-delete.
+  Clear all stale is a single server-side request (`POST /api/clear-stale`,
+  scoped to the selected agent filter): the button shows progress while it runs
+  and the result names any session that could not be archived, with the reason.
 
 Guardrails: clearing only touches `*.jsonl` transcripts under a known agent
 session root, refuses anything in a `memory`/`memories` folder, and refuses a live
